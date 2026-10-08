@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Solana Star Catcher</title>
+<style>
+:root{
+  --purple:#9945FF;
+  --green:#14F195;
+  --ink:#0d0620;
+  --night:#150a2e;
+  --text:#f3ecff;
+  --muted:#b9a6dc;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  display:flex;flex-direction:column;overflow:hidden;
+  background:radial-gradient(120% 80% at 50% 0%,#2a1160 0%,var(--night) 45%,var(--ink) 100%);
+  color:var(--text);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-user-select:none;user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+header{
+  display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap;
+  padding:max(12px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left));
+  border-bottom:1px solid rgba(153,69,255,.45);
+  background:rgba(13,6,32,.6);
+}
+h1{
+  font-size:clamp(1.25rem,4.2vw,1.9rem);font-weight:800;letter-spacing:.02em;line-height:1.2;
+  background:linear-gradient(90deg,var(--purple),var(--green));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.stats{display:flex;gap:12px}
+.stat{
+  min-width:92px;padding:6px 14px;border-radius:10px;
+  border:1px solid rgba(153,69,255,.55);background:rgba(153,69,255,.12);
+  display:flex;flex-direction:column;align-items:flex-end;
+}
+.stat span{font-size:.72rem;color:var(--muted);letter-spacing:.04em}
+.stat b{font-size:1.7rem;line-height:1.15;font-variant-numeric:tabular-nums;font-weight:800}
+#score{color:var(--green)}
+#time.low{color:var(--green);animation:pulse .5s ease-in-out infinite alternate}
+.bump{animation:bump .18s ease-out}
+@keyframes bump{0%{transform:scale(1.35)}100%{transform:scale(1)}}
+@keyframes pulse{to{opacity:.45}}
+main{position:relative;flex:1;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+#overlay{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;
+  background:rgba(13,6,32,.8);
+}
+#overlay.hide{display:none}
+.panel{
+  width:min(100%,420px);padding:28px 24px;text-align:center;border-radius:18px;
+  border:1px solid var(--purple);background:rgba(21,10,46,.92);
+  box-shadow:0 0 40px rgba(153,69,255,.35);
+}
+.panel h2{font-size:1.5rem;margin-bottom:12px}
+.panel p{color:var(--muted);line-height:1.7;margin-bottom:8px;font-size:.98rem}
+.panel .big{font-size:3.4rem;font-weight:800;color:var(--green);line-height:1.1;margin:4px 0 10px;font-variant-numeric:tabular-nums}
+.g{color:var(--green);font-weight:700}
+.p{color:#c9a2ff;font-weight:700}
+button{
+  margin-top:16px;padding:14px 40px;border:0;border-radius:999px;cursor:pointer;
+  background:var(--green);color:#06220f;font:inherit;font-size:1.1rem;font-weight:800;
+  box-shadow:0 0 0 3px rgba(20,241,149,.25),0 6px 24px rgba(20,241,149,.3);
+  transition:transform .1s;
+}
+button:active{transform:scale(.96)}
+button:focus-visible{outline:3px solid var(--purple);outline-offset:3px}
+button:disabled{opacity:.45;cursor:default;box-shadow:none}
+@media (max-width:520px){
+  header{gap:8px}
+  h1{width:100%}
+  .stats{width:100%}
+  .stat{flex:1;flex-direction:row;align-items:baseline;justify-content:space-between}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Solana Star Catcher</h1>
+  <div class="stats">
+    <div class="stat"><span>スコア</span><b id="score">0</b></div>
+    <div class="stat"><span>残り時間</span><b id="time">30</b></div>
+  </div>
+</header>
+<main>
+  <canvas id="cv" aria-label="ゲーム画面"></canvas>
+  <div id="overlay">
+    <div class="panel">
+      <h2 id="ovTitle">30秒で星を集めよう</h2>
+      <p id="ovBig" class="big" hidden></p>
+      <p id="ovText">落ちてくる星をタップ（クリック）して集めます。<br><span class="g">緑の大きな星は1点</span>、<span class="p">紫の小さな星は3点</span>。</p>
+      <p id="ovBest"></p>
+      <button id="btn" type="button">スタート</button>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  const scoreEl = $('score'), timeEl = $('time');
+  const overlay = $('overlay'), ovTitle = $('ovTitle'), ovBig = $('ovBig');
+  const ovText = $('ovText'), ovBest = $('ovBest'), btn = $('btn');
+
+  const GREEN = '#14F195', PURPLE = '#9945FF', LILAC = '#c9a2ff';
+  const DURATION = 30;
+
+  let W = 0, H = 0, dpr = 1;
+  let state = 'ready', score = 0, timeLeft = DURATION, elapsed = 0, spawnT = 0, best = 0;
+  const stars = [], parts = [], pops = [], bg = [];
+
+  try { best = +localStorage.getItem('ssc-best') || 0; } catch (e) {}
+
+  function resize() {
+    const r = cv.parentElement.getBoundingClientRect();
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bg.length = 0;
+    for (let i = 0; i < 70; i++) {
+      bg.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.4 + .4, a: Math.random() * .5 + .15 });
+    }
+  }
+  window.addEventListener('resize', resize);
+
+  function starPath(x, y, r, rot) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = rot + i * Math.PI / 5 - Math.PI / 2;
+      const rr = i % 2 ? r * 0.46 : r;
+      ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+  }
+
+  function spawnStar() {
+    const small = Math.random() < 0.28;
+    const base = Math.max(24, Math.min(W, H) * 0.075);
+    const r = small ? base * 0.62 : base;
+    const k = Math.min(elapsed / DURATION, 1);
+    const speed = H * (0.38 + 0.22 * k) * (small ? 1.5 : 1) * (0.85 + Math.random() * 0.3);
+    stars.push({
+      x: r + Math.random() * Math.max(1, W - 2 * r), y: -r,
+      vy: speed, vx: (Math.random() - .5) * W * 0.06,
+      r, rot: Math.random() * 6.28, vr: (Math.random() - .5) * 2.5,
+      small, pts: small ? 3 : 1
+    });
+  }
+
+  function burst(s) {
+    const col = s.small ? PURPLE : GREEN;
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * 6.28, v = 80 + Math.random() * 160;
+      parts.push({ x: s.x, y: s.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: 0, life: .45, c: i % 3 ? col : '#fff' });
+    }
+  }
+
+  function catchStar(i) {
+    const s = stars[i];
+    stars.splice(i, 1);
+    score += s.pts;
+    scoreEl.textContent = score;
+    scoreEl.classList.remove('bump'); void scoreEl.offsetWidth; scoreEl.classList.add('bump');
+    burst(s);
+    pops.push({ x: s.x, y: s.y, t: 0, txt: '+' + s.pts, c: s.small ? LILAC : GREEN });
+  }
+
+  cv.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (state !== 'playing') return;
+    const rc = cv.getBoundingClientRect();
+    const px = e.clientX - rc.left, py = e.clientY - rc.top;
+    for (let i = stars.length - 1; i >= 0; i--) {
+      const s = stars[i];
+      const hit = Math.max(s.r * 1.3, 28);
+      if (Math.hypot(px - s.x, py - s.y) <= hit) { catchStar(i); break; }
+    }
+  });
+
+  function startGame() {
+    score = 0; timeLeft = DURATION; elapsed = 0; spawnT = 0;
+    stars.length = 0; parts.length = 0; pops.length = 0;
+    scoreEl.textContent = '0'; timeEl.textContent = DURATION; timeEl.classList.remove('low');
+    overlay.classList.add('hide');
+    state = 'playing';
+  }
+
+  function endGame() {
+    state = 'over';
+    stars.length = 0;
+    timeEl.textContent = '0'; timeEl.classList.remove('low');
+    const record = score > best;
+    if (record) {
+      best = score;
+      try { localStorage.setItem('ssc-best', String(best)); } catch (e) {}
+    }
+    ovTitle.textContent = 'タイムアップ';
+    ovBig.hidden = false; ovBig.textContent = score + '点';
+    ovText.textContent = '';
+    ovBest.textContent = record ? '自己ベストを更新しました！' : '自己ベスト：' + best + '点';
+    btn.textContent = 'もう一度';
+    btn.disabled = true;
+    setTimeout(() => { btn.disabled = false; }, 700);
+    overlay.classList.remove('hide');
+    btn.focus({ preventScroll: true });
+  }
+
+  btn.addEventListener('click', startGame);
+
+  function update(dt) {
+    if (state === 'playing') {
+      elapsed += dt;
+      timeLeft -= dt;
+      const shown = Math.max(0, Math.ceil(timeLeft));
+      if (String(shown) !== timeEl.textContent) timeEl.textContent = shown;
+      timeEl.classList.toggle('low', timeLeft <= 5);
+
+      spawnT -= dt;
+      if (spawnT <= 0) {
+        spawnStar();
+        spawnT = 0.6 - 0.3 * Math.min(elapsed / DURATION, 1);
+      }
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const s = stars[i];
+        s.y += s.vy * dt; s.x += s.vx * dt; s.rot += s.vr * dt;
+        if (s.x < s.r || s.x > W - s.r) s.vx = -s.vx;
+        if (s.y - s.r > H) stars.splice(i, 1);
+      }
+      if (timeLeft <= 0) endGame();
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.t >= p.life) parts.splice(i, 1);
+    }
+    for (let i = pops.length - 1; i >= 0; i--) {
+      pops[i].t += dt;
+      if (pops[i].t >= .7) pops.splice(i, 1);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    for (const b of bg) { ctx.globalAlpha = b.a; ctx.fillRect(b.x, b.y, b.r, b.r); }
+    ctx.globalAlpha = 1;
+
+    for (const s of stars) {
+      const col = s.small ? PURPLE : GREEN;
+      ctx.shadowColor = col; ctx.shadowBlur = 16;
+      starPath(s.x, s.y, s.r, s.rot);
+      ctx.fillStyle = col; ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.stroke();
+    }
+    for (const p of parts) {
+      ctx.globalAlpha = 1 - p.t / p.life;
+      ctx.fillStyle = p.c;
+      ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+    ctx.font = '800 22px system-ui,sans-serif'; ctx.textAlign = 'center';
+    for (const p of pops) {
+      ctx.globalAlpha = 1 - p.t / .7;
+      ctx.fillStyle = p.c;
+      ctx.fillText(p.txt, p.x, p.y - 14 - p.t * 60);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  let last = 0;
+  function frame(t) {
+    requestAnimationFrame(frame);
+    const dt = Math.min((t - last) / 1000 || 0, 0.05);
+    last = t;
+    update(dt);
+    draw();
+  }
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
